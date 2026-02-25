@@ -11,6 +11,7 @@ import re
 from .signal_processing import Signal
 
 class MapArray:
+    # TODO separate txt extraction function
     def __init__(self, folder:Path, name:str) -> None:
         self.path_to_data = folder
         self.name = name
@@ -245,37 +246,38 @@ class RamanMappingPlot:
         return fig
 
     def plot_plotly(self, outfile="polar_plot.html"):
-        da = self.da
+        raise NotImplementedError
+        # da = self.da
 
-        r, theta = np.meshgrid(self.zeniths, self.azimuths)
-        values = da["E_width"].to_numpy()
+        # r, theta = np.meshgrid(self.zeniths, self.azimuths)
+        # values = da["E_width"].to_numpy()
 
-        fig = go.Figure(
-            go.Scatterpolar(
-                r=r.flatten(),
-                theta=np.rad2deg(theta.flatten()),  # Plotly expects degrees
-                mode="markers",
-                marker=dict(
-                    color=values.flatten(),
-                    colorscale="Viridis",
-                    size=8,
-                    colorbar=dict(title="E_width"),
-                ),
-                customdata=values.flatten(),
-                hovertemplate=(
-                    "r: %{r}<br>"
-                    "theta: %{theta}<br>"
-                    "E_width: %{customdata}<extra></extra>")
-            )
-        )
+        # fig = go.Figure(
+        #     go.Scatterpolar(
+        #         r=r.flatten(),
+        #         theta=np.rad2deg(theta.flatten()),  # Plotly expects degrees
+        #         mode="markers",
+        #         marker=dict(
+        #             color=values.flatten(),
+        #             colorscale="Viridis",
+        #             size=8,
+        #             colorbar=dict(title="E_width"),
+        #         ),
+        #         customdata=values.flatten(),
+        #         hovertemplate=(
+        #             "r: %{r}<br>"
+        #             "theta: %{theta}<br>"
+        #             "E_width: %{customdata}<extra></extra>")
+        #     )
+        # )
 
-        fig.update_layout(
-            polar=dict(radialaxis=dict(range=[0, 100])),
-            showlegend=False,
-        )
+        # fig.update_layout(
+        #     polar=dict(radialaxis=dict(range=[0, 100])),
+        #     showlegend=False,
+        # )
 
-        fig.write_html(outfile)
-        return fig
+        # fig.write_html(outfile)
+        # return fig
 
 ###### functions ######
 

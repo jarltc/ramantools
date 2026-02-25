@@ -2,6 +2,8 @@ from . import xr
 from . import np
 from . import plt
 
+import re
+
 from scipy.signal import find_peaks
 from scipy.optimize import curve_fit
 
@@ -9,7 +11,7 @@ from typing import Dict
 
 class Signal:
     """ A single Raman spectrum. """
-    def __init__(self, name:str, x:np.ndarray, y:np.ndarray, Si_target=None, prominence=0.01):
+    def __init__(self, name:str, x:np.ndarray, y:np.ndarray, Si_target=None, prominence=0.01, fit=False):
         self.name = name
         if len(x) != len(y):
             raise ValueError("Mismatched x and y sizes")
@@ -23,6 +25,10 @@ class Signal:
         self.get_peak_centers(prominence)  # allows fit_peaks to be run
         if Si_target is not None:
             self.correct_Si(Si_target)
+
+        if fit:
+            self.fit_peaks()
+    
     
     def _to_da(self, xdata:np.ndarray, ydata:np.ndarray):
         da = xr.DataArray(name="intensity", data=ydata, coords={"x": xdata})
@@ -67,7 +73,7 @@ class Signal:
         # epsilon: distances (cm-1) from peak center, must be carefully chosen for E2g peak to only fit 
         # to the rightmost portion of the peak.
         data = self._data
-        fitted_peaks: Dict[str, Peak|None] = {"E":None, "A":None, "Si":None}
+        fitted_peaks: Dict[str, Peak|None] = {"E":None, "A":None, "Si":None}  # type:ignore
         for i, peak_name in enumerate(["E", "A", "Si"], start=1):  # exclude LA(M) peak
             center = self.peak_centers[i]
             eps_L, eps_R = epsilon[peak_name]
@@ -106,6 +112,13 @@ class Signal:
         Apeak = self.fitted_peaks["A"]
         delta = Apeak.center - Epeak.center  # type:ignore
         return delta
+    
+    def fit_region(self, extent:tuple[float, float]):
+        left, right = extent
+        center = left + (right-left)/2
+        peak = Peak(self._data, bounds=(left, right), center=center)
+
+        return peak
     
 
 class Peak:
@@ -183,3 +196,4 @@ class Peak:
     @property
     def parameters(self):
         return {"amplitude":self.amplitude, "sigma":self.sigma, "center":self.center}
+    
