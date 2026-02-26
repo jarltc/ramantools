@@ -11,7 +11,13 @@ from typing import Dict
 
 class Signal:
     """ A single Raman spectrum. """
-    def __init__(self, name:str, x:np.ndarray, y:np.ndarray, Si_target=None, prominence=0.01, fit=False):
+    def __init__(self, name:str, 
+                 x:np.ndarray, 
+                 y:np.ndarray, 
+                 Si_target=None, 
+                 prominence=0.01, 
+                 peak_fn="gauss",
+                 fit=False):
         self.name = name
         if len(x) != len(y):
             raise ValueError("Mismatched x and y sizes")
@@ -25,6 +31,8 @@ class Signal:
         self.get_peak_centers(prominence)  # allows fit_peaks to be run
         if Si_target is not None:
             self.correct_Si(Si_target)
+
+        self.peak_fn = peak_fn
 
         if fit:
             self.fit_peaks()
@@ -77,7 +85,7 @@ class Signal:
         for i, peak_name in enumerate(["E", "A", "Si"], start=1):  # exclude LA(M) peak
             center = self.peak_centers[i]
             eps_L, eps_R = epsilon[peak_name]
-            peak = Peak(data, bounds=(center-eps_L, center+eps_R), center=center)
+            peak = Peak(data, bounds=(center-eps_L, center+eps_R), center=center, peak_fn=self.peak_fn)
             fitted_peaks[peak_name] = peak
 
         # Peaks have Gaussian parameters (amplitude, sigma, mu) recorded
@@ -116,7 +124,7 @@ class Signal:
     def fit_region(self, extent:tuple[float, float]):
         left, right = extent
         center = left + (right-left)/2
-        peak = Peak(self._data, bounds=(left, right), center=center)
+        peak = Peak(self._data, bounds=(left, right), center=center, peak_fn=self.peak_fn)
 
         return peak
     
@@ -133,10 +141,16 @@ class Peak:
     bounds (tuple[left, right]): Left and right extents of the peak to be fitted.
     center: Initial guess for the center of the peak. I suggest to use scipy's find_peaks to locate this.
     """
-    def __init__(self, data:xr.DataArray, bounds:tuple[float, float], center:float):
+    def __init__(self, data:xr.DataArray, bounds:tuple[float, float], center:float, peak_fn="gauss"):
         self.data = data.copy()
         self.left, self.right = bounds
         self.center = center
+
+        peak_fn_options = ["gauss", "lorentz"]
+        if peak_fn not in peak_fn_options:
+            raise ValueError(f"{peak_fn} not recognized, choose from: {peak_fn_options}")
+        else:
+            self.peak_fn = peak_fn
 
         self.y = self.data.sel(x=slice(self.left, self.right)).to_numpy()
         self.x = self.data.sel(x=slice(self.left, self.right)).coords["x"].to_numpy()
@@ -161,6 +175,23 @@ class Peak:
         """
         y = amplitude*np.exp((-1/(2*std)**2)*(x-center)**2)
         return y
+    
+    @staticmethod
+    def lorentz(x:np.ndarray, width:float, center:float):
+        """ Lorentzian line function.
+        
+        See more at: https://mathworld.wolfram.com/LorentzianFunction.html
+
+        Args:
+            x (np.ndarray): x data.
+            width (float): Width of the peak.
+            center (float): Center for the maximum.
+
+        Returns:
+            _type_: _description_
+        """
+        y = 1/np.pi * 0.5*width/((x-center)**2 + (0.5*width)**2)
+        return y
         
     @property
     def width(self) -> float:
@@ -172,6 +203,13 @@ class Peak:
         C = 2*np.sqrt(2*np.log(2))
         return C*self.sigma
 
+    def fit(self, **kwargs):
+        functions = {
+            "gauss": self.fit_gauss, 
+            "lorentz": self.fit_lorentz
+            }
+        return functions[self.peak_fn](**kwargs)
+
     def fit_gauss(self, method='trf'):
         """ Try to fit a Gaussian function to the data within bounds.
 
@@ -181,9 +219,26 @@ class Peak:
         Returns:
             list[float]: Returns optimized parameters that fit the data.
         """
-        center = self.center  # TODO use scipy find_peaks
+
+        center = self.center
         y0 = self.data.sel(x=center, method='nearest').item()
         result = curve_fit(self.gauss, self.x, self.y, p0=(y0, 0.5, center), method=method)
+        parameters = result[0]
+        return parameters
+
+    def fit_lorentz(self, method='trf'):
+        """ Try to fit a Lorentzian function to the data within bounds.
+
+        Args:
+            method (str, optional): Optimization method for curve_fit. Defaults to 'trf'.
+
+        Returns:
+            list[float]: Returns optimized parameters that fit the data.
+        """
+
+        center = self.center
+        width = self.right - self.left  # take full region as initial guess
+        result = curve_fit(self.lorentz, self.x, self.y, p0=(width, center), method=method)
         parameters = result[0]
         return parameters
 

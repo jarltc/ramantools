@@ -280,7 +280,7 @@ class RamanMappingPlot:
         # return fig
 
 ###### functions ######
-
+# TODO move to __init__ base ramantools
 def signal2map(da: xr.DataArray, outdir:Path|None=None, fname="mapping_gauss", **kwargs):
     calculation = Calculation(da, **kwargs)
     calculation.calculate_parameters()
