@@ -2,8 +2,6 @@ from . import xr
 from . import np
 from . import plt
 
-import re
-
 from scipy.signal import find_peaks
 from scipy.optimize import curve_fit
 
@@ -121,10 +119,10 @@ class Signal:
         delta = Apeak.center - Epeak.center  # type:ignore
         return delta
     
-    def fit_region(self, extent:tuple[float, float]):
+    def fit_region(self, extent:tuple[float, float], **kwargs):
         left, right = extent
         center = left + (right-left)/2
-        peak = Peak(self._data, bounds=(left, right), center=center, peak_fn=self.peak_fn)
+        peak = Peak(self._data, bounds=(left, right), center=center, peak_fn=self.peak_fn, **kwargs)
 
         return peak
     
@@ -141,8 +139,12 @@ class Peak:
     bounds (tuple[left, right]): Left and right extents of the peak to be fitted.
     center: Initial guess for the center of the peak. I suggest to use scipy's find_peaks to locate this.
     """
-    def __init__(self, data:xr.DataArray, bounds:tuple[float, float], center:float, peak_fn="gauss"):
-        self.data = data.copy()
+    def __init__(self, data:xr.DataArray, 
+                 bounds:tuple[float, float], 
+                 center:float, 
+                 peak_fn="gauss",
+                 baseline=0):
+        self.data = (data-baseline).copy()
         self.left, self.right = bounds
         self.center = center
 
@@ -155,8 +157,17 @@ class Peak:
         self.y = self.data.sel(x=slice(self.left, self.right)).to_numpy()
         self.x = self.data.sel(x=slice(self.left, self.right)).coords["x"].to_numpy()
 
+        parameterstyle = {"gauss": {"amplitude":0., "sigma":0., "center":0.}, 
+                          "lorentz": {"width": 0., "center":0., "intercept":0.}}
+        self.parameters = parameterstyle[peak_fn]
+
         # attempt to fit peak
-        self.amplitude, self.sigma, self.center = self.fit_gauss()
+        # self.amplitude, self.sigma, self.center = self.fit_gauss()
+        
+        # fit and unpack results into dict
+        parameters = self.fit()
+        for i, key in enumerate(self.parameters):
+            self.parameters[key] = parameters[i]
 
     @staticmethod
     def gauss(x:np.ndarray, amplitude:float, std:float, center:float):
@@ -177,7 +188,7 @@ class Peak:
         return y
     
     @staticmethod
-    def lorentz(x:np.ndarray, width:float, center:float):
+    def lorentz(x:np.ndarray, width:float, center:float, intercept:float):
         """ Lorentzian line function.
         
         See more at: https://mathworld.wolfram.com/LorentzianFunction.html
@@ -190,7 +201,7 @@ class Peak:
         Returns:
             _type_: _description_
         """
-        y = 1/np.pi * 0.5*width/((x-center)**2 + (0.5*width)**2)
+        y = intercept + 1/np.pi * 0.5*width/((x-center)**2 + (0.5*width)**2)
         return y
         
     @property
@@ -200,8 +211,9 @@ class Peak:
         A Gaussian distribution has the full width at half maximum:
         W = 2 * sqrt(log(2)) * sigma
         """
-        C = 2*np.sqrt(2*np.log(2))
-        return C*self.sigma
+        # C = 2*np.sqrt(2*np.log(2))
+        # return C*self.sigma
+        raise NotImplementedError()
 
     def fit(self, **kwargs):
         functions = {
@@ -238,7 +250,8 @@ class Peak:
 
         center = self.center
         width = self.right - self.left  # take full region as initial guess
-        result = curve_fit(self.lorentz, self.x, self.y, p0=(width, center), method=method)
+        intercept = 0
+        result = curve_fit(self.lorentz, self.x, self.y, p0=(width, center, intercept), method=method, bounds=(0, np.inf))
         parameters = result[0]
         return parameters
 
@@ -246,9 +259,18 @@ class Peak:
         """ Return y values evaluated at x. If x is not specified, use the given bounds. """
         if x is None:
             x = self.x
-        return self.gauss(x, self.amplitude, self.sigma, self.center)
+        
+        if self.peak_fn == "gauss":
+            amplitude = self.parameters["amplitude"]
+            sigma = self.parameters["sigma"]
+            center = self.parameters["center"]
+            return self.gauss(x, amplitude, sigma, center)
+        elif self.peak_fn == "lorentz":
+            width = self.parameters["width"]
+            center = self.parameters["center"]
+            intercept = self.parameters["intercept"]
+            return self.lorentz(x, width, center, intercept)
 
-    @property
-    def parameters(self):
-        return {"amplitude":self.amplitude, "sigma":self.sigma, "center":self.center}
+    # def _get_parameters(self):
+    #     return self.parameters
     
