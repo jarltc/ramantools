@@ -6,7 +6,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import pandas as pd
-import re
 from .signal_processing import Signal
 
 # please forgive me if I misuse the terms "signal" and "spectrum" 
@@ -29,6 +28,7 @@ def from_txt(file:Path, prominence:float=0.01, Si_target=520.8, **kwargs):
     return sg
 
 def extract_angle(filename):
+    import re
     """ Figure out angle value from filename. 
     The function expects an angle value followed by 'Grad' """
     m = re.search(r'([0-9]+)Grad', filename)
