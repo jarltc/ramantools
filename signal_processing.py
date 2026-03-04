@@ -74,8 +74,8 @@ class Peak(ABC):
         x = self.x
         y = self.y - self.baseline
         p0 = self.initial_guess()
-        result = curve_fit(self.model, x, y, p0=p0, **kwargs)
-        parameters = result[0]
+        parameters, pcov = curve_fit(self.model, x, y, p0=p0, **kwargs)
+        self.err = np.sqrt(np.diag(pcov))
         self._params = parameters
         return parameters
 
@@ -112,7 +112,7 @@ class GaussPeak(Peak):
     def fwhm(self):
         sigma = self.params["sigma"]
         C = 2*np.sqrt(2*np.log(2))
-        return C*sigma
+        return abs(C*sigma)
 
 
 class LorentzPeak(Peak):
@@ -140,7 +140,7 @@ class LorentzPeak(Peak):
     @property
     def fwhm(self):
         gamma = self.params["gamma"]
-        return 2*gamma
+        return abs(2*gamma)
 
 class Signal:
     """ A single Raman spectrum. """
