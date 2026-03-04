@@ -2,16 +2,156 @@ from . import xr
 from . import np
 from . import plt
 
-import re
+from abc import ABC, abstractmethod
 
 from scipy.signal import find_peaks
 from scipy.optimize import curve_fit
 
 from typing import Dict
+    
+class Peak(ABC):
+    """ Peak fitting class.
+
+    Two functions are available: either a Gaussian peak or Lorentzian peak can be fit to the data.
+
+    Uses xr.DataArray to simplify slicing by accessing y values using x (and not having to fiddle with indices).
+    After fitting, Peaks have attributes amplitude, sigma, and center. 
+    These can also be accessed with the property Peak.parameters.
+
+    Args:
+    data (xr.DataArray): One-dimensional data for intensity (y) as a function of Raman shift (x).
+    bounds (tuple[left, right]): Left and right extents of the peak to be fitted.
+    center: Initial guess for the center of the peak. I suggest to use scipy's find_peaks to locate this.
+    """
+    def __init__(self, data:xr.DataArray, 
+                 bounds:tuple[float, float], 
+                 center:float,
+                 baseline=0):
+        self.data = data.copy()
+        self.left, self.right = bounds
+        self.center = center
+        self.baseline = baseline
+
+        self.y = self.data.sel(x=slice(self.left, self.right)).to_numpy()
+        self.x = self.data.sel(x=slice(self.left, self.right)).coords["x"].to_numpy()
+
+        self._params = None
+
+    def initial_guess(self):
+        x = self.x
+        y = self.y
+        height = np.max(y)
+        center = x[np.argmax(y)]
+        sigma = self.right - self.left
+        return (height, center, sigma)
+
+    # abstract methods are to be handled by subclasses
+    @abstractmethod
+    def model(self, x, *params):
+        """ Peak model function to be implemented by subclasses. """
+        pass
+    
+    @property
+    @abstractmethod
+    def fwhm(self):
+        """ Return full width at half maximum """
+        pass
+
+    @property
+    @abstractmethod
+    def params(self) -> dict:
+        """ Return fitting parameters as dict """
+        pass
+
+    def fit(self, **kwargs):
+        """ Fit curve to the data.
+
+        kwargs are passed to curve_fit().
+
+        Returns:
+            tuple[float, float, float]: Fitting parameters.
+        """
+        x = self.x
+        y = self.y - self.baseline
+        p0 = self.initial_guess()
+        parameters, pcov = curve_fit(self.model, x, y, p0=p0, **kwargs)
+        self.err = np.sqrt(np.diag(pcov))
+        self._params = parameters
+        return parameters
+
+    def evaluate(self, x=None):
+        """ Return y values evaluated at x. If x is not specified, use the given bounds. """
+        if x is None:
+            x = self.x
+
+        if self._params is None:
+            raise RuntimeError("Peak has not yet been fitted.")
+        
+        return self.model(x, *self._params) + self.baseline  # type:ignore
+    
+
+class GaussPeak(Peak):
+    def __init__(self, data: xr.DataArray, 
+                 bounds: tuple[float, float], 
+                 center: float,
+                 baseline=0):
+        super().__init__(data, bounds, center, baseline)
+
+    def model(self, x, height, center, sigma):
+        return height * np.exp(-((x - center)**2) / (2 * sigma**2))
+    
+    @property
+    def params(self):
+        if self._params is None:
+            raise RuntimeError("Peak has not yet been fitted.")
+        
+        height, center, sigma = self._params
+        return {"height": height, "center": center, "sigma": sigma}
+    
+    @property
+    def fwhm(self):
+        sigma = self.params["sigma"]
+        C = 2*np.sqrt(2*np.log(2))
+        return abs(C*sigma)
+
+
+class LorentzPeak(Peak):
+    def __init__(self, data: xr.DataArray, 
+                 bounds: tuple[float, float], 
+                 center: float,
+                 baseline=0):
+        super().__init__(data, bounds, center, baseline)
+
+    def model(self, x, amplitude, center, gamma):
+        """ Lorentzian line function.
+        
+        See more at: https://mathworld.wolfram.com/LorentzianFunction.html
+        """
+        return amplitude * (gamma**2 / ((x-center)**2 + gamma**2))
+    
+    @property
+    def params(self):
+        if self._params is None:
+            raise RuntimeError("Peak has not yet been fitted.")
+        
+        height, center, gamma = self._params
+        return {"height": height, "center": center, "gamma": gamma}
+    
+    @property
+    def fwhm(self):
+        gamma = self.params["gamma"]
+        return abs(2*gamma)
 
 class Signal:
     """ A single Raman spectrum. """
-    def __init__(self, name:str, x:np.ndarray, y:np.ndarray, Si_target=None, prominence=0.01, fit=False):
+    def __init__(self, name:str, 
+                 x:np.ndarray, 
+                 y:np.ndarray, 
+                 Si_target=None, 
+                 prominence=0.01, 
+                 peak_fn="gauss",
+                 fit=False,
+                 preprocess=True):
         self.name = name
         if len(x) != len(y):
             raise ValueError("Mismatched x and y sizes")
@@ -21,10 +161,13 @@ class Signal:
         self._data = self._to_da(x, y)
 
         # preprocess
-        self.normalize()
-        self.get_peak_centers(prominence)  # allows fit_peaks to be run
-        if Si_target is not None:
-            self.correct_Si(Si_target)
+        if preprocess:
+            self.normalize()
+            self.get_peak_centers(prominence)  # allows fit_peaks to be run
+            if Si_target is not None:
+                self.correct_Si(Si_target)
+
+        self.peak_fn = peak_fn
 
         if fit:
             self.fit_peaks()
@@ -56,14 +199,24 @@ class Signal:
             result = Signal(self.name, x+value, y) 
             return result        
 
-    def get_peak_centers(self, prominence):
+    def get_peak_centers(self, prominence:float):
+        """ Rough peak finding algorithm.
+
+        Uses find_peaks() from scipy.signal.
+
+        Args:
+            prominence (float): Criterion for what is considered a peak.
+
+        Returns:
+            list[float]: List of positions where the peaks are found.
+        """
         self.prominence = prominence
         indexes, _ = find_peaks(self.y, prominence=prominence)
         centers = np.array([self.x[index] for index in indexes])
         self.peak_centers = centers
         self.peak_indexes = indexes
         
-        # it might be better to use the fitted gaussians in fit_peaks to get the intensities
+        # it might be better to use the fitted Peaks in fit_peaks to get the intensities
         # but I will keep this for now
         self.peak_intensities = [self.y[index] for index in indexes]
         
@@ -72,15 +225,16 @@ class Signal:
     def fit_peaks(self, epsilon = {"E": (3, 8), "A": (5, 5), "Si": (6, 6)}):
         # epsilon: distances (cm-1) from peak center, must be carefully chosen for E2g peak to only fit 
         # to the rightmost portion of the peak.
-        data = self._data
         fitted_peaks: Dict[str, Peak|None] = {"E":None, "A":None, "Si":None}  # type:ignore
         for i, peak_name in enumerate(["E", "A", "Si"], start=1):  # exclude LA(M) peak
             center = self.peak_centers[i]
             eps_L, eps_R = epsilon[peak_name]
-            peak = Peak(data, bounds=(center-eps_L, center+eps_R), center=center)
+            bounds = (center-eps_L, center+eps_R)
+            peak = self._get_peakfn(center, bounds=bounds)
+            peak.fit()
             fitted_peaks[peak_name] = peak
 
-        # Peaks have Gaussian parameters (amplitude, sigma, mu) recorded
+        # Peaks have parameters (amplitude, sigma/gamma, mu) recorded
         self.fitted_peaks = fitted_peaks
 
     def fwhm(self) -> dict[str, float]:
@@ -94,10 +248,19 @@ class Signal:
         self.y /= y_norm
 
     def correct_Si(self, target:float):
-        # TODO this doesnt use self.shift at all...
-        # get_peak_centers must be run first before using this!
-        delta = target - self.peak_centers[3]  # Si peak should be fourth from left to right
-        self.x += delta
+        # run once in case it wasn't yet run
+        self.get_peak_centers(self.prominence)
+
+        # look for the closest peak center to Si peak (520.8)
+        eps_old = 999.
+        for peak_x in self.peak_centers:
+            distance = 520.8 - peak_x
+            if distance < eps_old:
+                Si_peak = peak_x
+                eps_old = distance
+            
+        delta = target - Si_peak  
+        self.x += delta  # shift x-values so that Si_peak matches the target position
         self.get_peak_centers(self.prominence)
         self._data = self._to_da(self.x, self.y)
 
@@ -113,87 +276,78 @@ class Signal:
         delta = Apeak.center - Epeak.center  # type:ignore
         return delta
     
-    def fit_region(self, extent:tuple[float, float]):
+    def fit_region(self, extent:tuple[float, float], method='trf', baseline=0, peak_fn=None, **kwargs):
         left, right = extent
         center = left + (right-left)/2
-        peak = Peak(self._data, bounds=(left, right), center=center)
+
+        peak = self._get_peakfn(center, extent, baseline, peak_fn)
+        peak.fit(method=method, **kwargs)
 
         return peak
     
+    def _get_peakfn(self, center:float, bounds:tuple[float, float], baseline=0, peak_fn=None, **kwargs) -> Peak:
+        """ Get peak based on the specified peak function. """
+        left, right = bounds
+        peak_functions = {"gauss": GaussPeak, "lorentz": LorentzPeak}
 
-class Peak:
-    """ Gaussian peak fitting.
+        if peak_fn is None:
+            peak_fn = self.peak_fn
+        
+        peak = peak_functions[peak_fn](self._data, 
+                                       bounds=(left, right), 
+                                       center=center, 
+                                       baseline=baseline, 
+                                       **kwargs)
+        return peak
+    
+    def extract_baseline(self, niter=20) -> np.ndarray:
+        """ Baseline function for data correction/peak fitting.
 
-    Uses xr.DataArray to simplify slicing by accessing y values using x (and not having to fiddle with indices).
-    After fitting, Peaks have attributes amplitude, sigma, and center. 
-    These can also be accessed with the property Peak.parameters.
-
-    Args:
-    data (xr.DataArray): One-dimensional data for intensity (y) as a function of Raman shift (x).
-    bounds (tuple[left, right]): Left and right extents of the peak to be fitted.
-    center: Initial guess for the center of the peak. I suggest to use scipy's find_peaks to locate this.
-    """
-    def __init__(self, data:xr.DataArray, bounds:tuple[float, float], center:float):
-        self.data = data.copy()
-        self.left, self.right = bounds
-        self.center = center
-
-        self.y = self.data.sel(x=slice(self.left, self.right)).to_numpy()
-        self.x = self.data.sel(x=slice(self.left, self.right)).coords["x"].to_numpy()
-
-        # attempt to fit peak
-        self.amplitude, self.sigma, self.center = self.fit_gauss()
-
-    @staticmethod
-    def gauss(x:np.ndarray, amplitude:float, std:float, center:float):
-        """ Standard Gaussian function.
-
-        A * exp(-1/(2*sigma^2) * (x-mu)^2)
+        Taken from stackoverflow (https://stackoverflow.com/questions/57350711/baseline-correction-for-spectroscopic-data?rq=3), which
+        itself was based on the following paper: https://www.caen.it/wp-content/uploads/2017/10/ED3163_gamma_spectroscopy_CAEN_edu_kit.pdf
+        
+        I don't quite understand how it works so proceed with caution.
 
         Args:
-            x (np.ndarray): x data.
-            amplitude (float): Value for the amplitude.
-            std (float): Value for the standard deviation.
-            center (float): Value for the center of the distribution.
+            ydata (np.ndarray): Raman y-data.
+            niter (int, optional): Number of iterations. The best value is 10-20 based on my own testing.
 
         Returns:
-            np.ndarray: Values of the specified Gaussian given f(x)
+            np.ndarray: Array of the calculated baseline. 
         """
-        y = amplitude*np.exp((-1/(2*std)**2)*(x-center)**2)
-        return y
-        
-    @property
-    def width(self) -> float:
-        """ Calculate the full width at half maximum for the peak. 
-        
-        A Gaussian distribution has the full width at half maximum:
-        W = 2 * sqrt(log(2)) * sigma
-        """
-        C = 2*np.sqrt(2*np.log(2))
-        return C*self.sigma
+        ydata = self._data.to_numpy()
+        raman_spectra_transformed = np.log(np.log(np.sqrt(ydata +1)+1)+1)
 
-    def fit_gauss(self, method='trf'):
-        """ Try to fit a Gaussian function to the data within bounds.
+        working_spectra = np.zeros(ydata.shape)
+
+        for pp in np.arange(0, niter):
+            r1 = raman_spectra_transformed
+            r2 = (np.roll(raman_spectra_transformed, -pp, axis=0) + np.roll(raman_spectra_transformed, pp, axis=0))/2
+            working_spectra = np.minimum(r1,r2)
+            raman_spectra_transformed = working_spectra
+
+        baseline = (np.exp(np.exp(raman_spectra_transformed)-1)-1)**2 -1
+        return baseline
+    
+    def correct_baseline(self, niter=20):
+        """ Apply baseline correction and generate new Signal instance.
+
+        This doesn't work very well in my experience but I'm leaving it here anyway.
 
         Args:
-            method (str, optional): Optimization method for curve_fit. Defaults to 'trf'.
+            niter (int, optional): Number of iterations for baseline extraction algorithm. Defaults to 20.
 
         Returns:
-            list[float]: Returns optimized parameters that fit the data.
+            Signal: Signal with corrected baseline.
         """
-        center = self.center  # TODO use scipy find_peaks
-        y0 = self.data.sel(x=center, method='nearest').item()
-        result = curve_fit(self.gauss, self.x, self.y, p0=(y0, 0.5, center), method=method)
-        parameters = result[0]
-        return parameters
-
-    def get_fitted(self, x=None):
-        """ Return y values evaluated at x. If x is not specified, use the given bounds. """
-        if x is None:
-            x = self.x
-        return self.gauss(x, self.amplitude, self.sigma, self.center)
-
-    @property
-    def parameters(self):
-        return {"amplitude":self.amplitude, "sigma":self.sigma, "center":self.center}
+        corrected = self._data.to_numpy().copy()
+        baseline = self.extract_baseline(niter)
+        corrected -= baseline
+        x = self._data.coords["x"].to_numpy().copy()
+        new_signal = Signal("", 
+                            x, 
+                            corrected, 
+                            prominence=self.prominence, 
+                            peak_fn=self.peak_fn)
+        return new_signal
     
