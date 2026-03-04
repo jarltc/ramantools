@@ -276,24 +276,28 @@ class Signal:
         delta = Apeak.center - Epeak.center  # type:ignore
         return delta
     
-    def fit_region(self, extent:tuple[float, float], method='trf', baseline=0, **kwargs):
+    def fit_region(self, extent:tuple[float, float], method='trf', baseline=0, peak_fn=None, **kwargs):
         left, right = extent
         center = left + (right-left)/2
 
-        peak = self._get_peakfn(center, extent, baseline)
+        peak = self._get_peakfn(center, extent, baseline, peak_fn)
         peak.fit(method=method, **kwargs)
 
         return peak
     
-    def _get_peakfn(self, center:float, bounds:tuple[float, float], baseline=0, **kwargs) -> Peak:
+    def _get_peakfn(self, center:float, bounds:tuple[float, float], baseline=0, peak_fn=None, **kwargs) -> Peak:
         """ Get peak based on the specified peak function. """
         left, right = bounds
         peak_functions = {"gauss": GaussPeak, "lorentz": LorentzPeak}
-        peak = peak_functions[self.peak_fn](self._data, 
-                                            bounds=(left, right), 
-                                            center=center, 
-                                            baseline=baseline, 
-                                            **kwargs)
+
+        if peak_fn is None:
+            peak_fn = self.peak_fn
+        
+        peak = peak_functions[peak_fn](self._data, 
+                                       bounds=(left, right), 
+                                       center=center, 
+                                       baseline=baseline, 
+                                       **kwargs)
         return peak
     
     def extract_baseline(self, niter=20) -> np.ndarray:
