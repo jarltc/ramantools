@@ -295,3 +295,54 @@ class Signal:
                                             **kwargs)
         return peak
     
+    def extract_baseline(self, niter=20) -> np.ndarray:
+        """ Baseline function for data correction/peak fitting.
+
+        Taken from stackoverflow (https://stackoverflow.com/questions/57350711/baseline-correction-for-spectroscopic-data?rq=3), which
+        itself was based on the following paper: https://www.caen.it/wp-content/uploads/2017/10/ED3163_gamma_spectroscopy_CAEN_edu_kit.pdf
+        
+        I don't quite understand how it works so proceed with caution.
+
+        Args:
+            ydata (np.ndarray): Raman y-data.
+            niter (int, optional): Number of iterations. The best value is 10-20 based on my own testing.
+
+        Returns:
+            np.ndarray: Array of the calculated baseline. 
+        """
+        ydata = self._data.to_numpy()
+        raman_spectra_transformed = np.log(np.log(np.sqrt(ydata +1)+1)+1)
+
+        working_spectra = np.zeros(ydata.shape)
+
+        for pp in np.arange(0, niter):
+            r1 = raman_spectra_transformed
+            r2 = (np.roll(raman_spectra_transformed, -pp, axis=0) + np.roll(raman_spectra_transformed, pp, axis=0))/2
+            working_spectra = np.minimum(r1,r2)
+            raman_spectra_transformed = working_spectra
+
+        baseline = (np.exp(np.exp(raman_spectra_transformed)-1)-1)**2 -1
+        return baseline
+    
+    def correct_baseline(self, niter=20):
+        """ Apply baseline correction and generate new Signal instance.
+
+        This doesn't work very well in my experience but I'm leaving it here anyway.
+
+        Args:
+            niter (int, optional): Number of iterations for baseline extraction algorithm. Defaults to 20.
+
+        Returns:
+            Signal: Signal with corrected baseline.
+        """
+        corrected = self._data.to_numpy().copy()
+        baseline = self.extract_baseline(niter)
+        corrected -= baseline
+        x = self._data.coords["x"].to_numpy().copy()
+        new_signal = Signal("", 
+                            x, 
+                            corrected, 
+                            prominence=self.prominence, 
+                            peak_fn=self.peak_fn)
+        return new_signal
+    
