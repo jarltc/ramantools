@@ -161,10 +161,11 @@ class Signal:
         self._data = self._to_da(x, y)
 
         # preprocess
-        self.normalize()
-        self.get_peak_centers(prominence)  # allows fit_peaks to be run
-        if Si_target is not None:
-            self.correct_Si(Si_target)
+        if preprocess:
+            self.normalize()
+            self.get_peak_centers(prominence)  # allows fit_peaks to be run
+            if Si_target is not None:
+                self.correct_Si(Si_target)
 
         self.peak_fn = peak_fn
 
