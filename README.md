@@ -4,83 +4,95 @@ Short project description: a concise summary of the repository’s purpose and s
 
 ## Table of Contents
 - [Features](#features)
-- [Requirements](#requirements)
 - [Installation](#installation)
 - [Usage](#usage)
-- [Data](#data)
-- [Testing](#testing)
-- [Development](#development)
-- [Contributing](#contributing)
-- [License](#license)
-- [Contact](#contact)
 
 ## Features
-- Bullet list of main features or capabilities
-- Example: import, preprocess, analyze, visualize Raman spectra
-
-## Requirements
-- Python X.Y+ (or list other runtimes)
-- Key libraries: numpy, scipy, pandas, matplotlib (or a requirements.txt)
+- Combine multiple .txt files into netCDF/DataArrays
+- Peak fitting and analysis for MoS2 Raman data using Signal
+- Calculate MoS2 signal metrics:
+  - LA(M)/A1g ratio
+  - E2g - A1g peak widths
+  - E2g - A1g peak distance
+- Automatically create mappings of aforementioned metrics into netCDF/DataArrays
 
 ## Installation
-Clone the repo and set up environment:
+Install with pip (editable install)
+
+Clone the repository and install the package in editable mode:
+
 ```bash
 git clone https://github.com/<user>/ramantools.git
 cd ramantools
-python -m venv .venv
-source .venv/bin/activate   # macOS / Linux
-# .venv\Scripts\activate    # Windows
-pip install -r requirements.txt
+pip install -e .
 ```
+
+This installs the package into your current Python environment while allowing you to modify the source code.
 
 ## Usage
-Quick examples:
+
+### Loading a Spectrum
+
 ```python
-from ramantools import loader, preprocessing, analysis
+from ramantools import from_txt
+from definitions import root
 
-data = loader.load("path/to/spectrum.csv")
-spec = preprocessing.baseline_subtract(data)
-result = analysis.fit_peaks(spec)
-analysis.plot(spec, result)
-```
-Add CLI examples if applicable:
-```bash
-python -m ramantools.cli --input data.csv --output results/
+signal = from_txt(
+    root / "raman" / "sample.txt",
+    prominence=0.03,   # minimum peak prominence after normalization
+    peak_fn="lorentz"  # "gauss" or "lorentz"
+)
 ```
 
-## Data
-- Describe expected data formats, column names, units
-- Mention sample data location (e.g., `data/` or external resources)
-- Notes on data licensing and preprocessing steps
+On load, the spectrum is normalized and peak centers are detected automatically.
 
-## Testing
-Run tests:
-```bash
-pytest tests/
-```
-Add CI badge and brief note about code coverage if available.
+---
 
-## Development
-- Branching model (e.g., main for release, develop for features)
-- How to run linters/formatters:
-```bash
-black .
-flake8
+### Fitting Peaks
+
+**Standard peaks (E2g, A1g, Si):**
+
+```python
+signal.fit_peaks()
+
+signal.fitted_peaks["E"].params   # {"height", "center", "gamma"}
+signal.fitted_peaks["E"].fwhm     # full width at half maximum (cm⁻¹)
+
+signal.EA_distance()  # distance between E2g and A1g centers
+signal.LAM_ratio()    # LA(M) / A1g intensity ratio
 ```
 
-## Contributing
-- Brief contribution guide: fork → branch → PR → review
-- Link to CONTRIBUTING.md if present
-- Code of conduct reference
+**Arbitrary spectral region:**
 
-## License
-- Short license statement and link to LICENSE file (e.g., MIT, Apache-2.0)
+```python
+extent = (498, 541)
+baseline = signal._data.sel(x=498, method='nearest').item()
+peak = signal.fit_region(extent, baseline=baseline, bounds=(0, None))
 
-## Citation
-If you expect users to cite this project, provide citation information or DOI.
+peak.params  # fitted parameters
+peak.fwhm    # FWHM (cm⁻¹)
+```
 
-## Contact
-Maintainer: Your Name <you@example.com>
-Repository: https://github.com/<user>/ramantools
+---
 
-Replace placeholders with project-specific details.
+### Evaluating and Plotting a Fit
+
+```python
+import numpy as np
+import holoviews as hv
+
+x = np.linspace(*extent, 500)
+signal._data.hvplot(label="signal") * hv.Curve((x, peak.evaluate(x)), label="fit")
+```
+
+---
+
+### Baseline Correction
+
+```python
+corrected = signal.correct_baseline(niter=20)  # returns a new Signal
+corrected.peak_fn = "lorentz"
+peak = corrected.fit_region((210, 230))
+```
+
+> Inspect results visually — correction can be unreliable near overlapping peaks.
