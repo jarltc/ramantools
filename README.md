@@ -1,6 +1,6 @@
 # ramantools
 
-Short project description: a concise summary of the repository’s purpose and scope.
+Tools for analysis of Raman spectra, particularly for characterization of deposited MoS2 films on Si.
 
 ## Table of Contents
 - [Features](#features)
@@ -22,7 +22,7 @@ Install with pip (editable install)
 Clone the repository and install the package in editable mode:
 
 ```bash
-git clone https://github.com/<user>/ramantools.git
+git clone https://github.com/jarltc/ramantools.git
 cd ramantools
 pip install -e .
 ```
