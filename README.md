@@ -35,10 +35,9 @@ This installs the package into your current Python environment while allowing yo
 
 ```python
 from ramantools import from_txt
-from definitions import root
 
 signal = from_txt(
-    root / "raman" / "sample.txt",
+    "path/to/sample.txt",
     prominence=0.03,   # minimum peak prominence after normalization
     peak_fn="lorentz"  # "gauss" or "lorentz"
 )
