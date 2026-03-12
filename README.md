@@ -43,7 +43,7 @@ signal = from_txt(
 )
 ```
 
-On load, the spectrum is normalized and peak centers are detected automatically.
+On load, the spectrum is normalized and peak centers are detected automatically based on the given prominence value.
 
 ---
 
@@ -65,11 +65,10 @@ signal.LAM_ratio()    # LA(M) / A1g intensity ratio
 
 ```python
 extent = (498, 541)
-baseline = signal._data.sel(x=498, method='nearest').item()
-peak = signal.fit_region(extent, baseline=baseline, bounds=(0, None))
+peak = signal.fit_region(extent)
 
 peak.params  # fitted parameters
-peak.fwhm    # FWHM (cm⁻¹)
+peak.fwhm    # full width at half maximum (cm⁻¹)
 ```
 
 ---
@@ -91,7 +90,7 @@ signal._data.hvplot(label="signal") * hv.Curve((x, peak.evaluate(x)), label="fit
 ```python
 corrected = signal.correct_baseline(niter=20)  # returns a new Signal
 corrected.peak_fn = "lorentz"
-peak = corrected.fit_region((210, 230))
+peak = corrected.fit_region((210, 230))  # fit a peak to the region (210, 230)
 ```
 
 > Inspect results visually — correction can be unreliable near overlapping peaks.
