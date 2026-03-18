@@ -1,6 +1,6 @@
 # ramantools
 
-Short project description: a concise summary of the repository’s purpose and scope.
+Tools for analysis of Raman spectra, particularly for characterization of deposited MoS2 films on Si.
 
 ## Table of Contents
 - [Features](#features)
@@ -22,7 +22,7 @@ Install with pip (editable install)
 Clone the repository and install the package in editable mode:
 
 ```bash
-git clone https://github.com/<user>/ramantools.git
+git clone https://github.com/jarltc/ramantools.git
 cd ramantools
 pip install -e .
 ```
@@ -35,16 +35,15 @@ This installs the package into your current Python environment while allowing yo
 
 ```python
 from ramantools import from_txt
-from definitions import root
 
 signal = from_txt(
-    root / "raman" / "sample.txt",
+    "path/to/sample.txt",
     prominence=0.03,   # minimum peak prominence after normalization
     peak_fn="lorentz"  # "gauss" or "lorentz"
 )
 ```
 
-On load, the spectrum is normalized and peak centers are detected automatically.
+On load, the spectrum is normalized and peak centers are detected automatically based on the given prominence value.
 
 ---
 
@@ -66,11 +65,10 @@ signal.LAM_ratio()    # LA(M) / A1g intensity ratio
 
 ```python
 extent = (498, 541)
-baseline = signal._data.sel(x=498, method='nearest').item()
-peak = signal.fit_region(extent, baseline=baseline, bounds=(0, None))
+peak = signal.fit_region(extent)
 
 peak.params  # fitted parameters
-peak.fwhm    # FWHM (cm⁻¹)
+peak.fwhm    # full width at half maximum (cm⁻¹)
 ```
 
 ---
@@ -92,7 +90,7 @@ signal._data.hvplot(label="signal") * hv.Curve((x, peak.evaluate(x)), label="fit
 ```python
 corrected = signal.correct_baseline(niter=20)  # returns a new Signal
 corrected.peak_fn = "lorentz"
-peak = corrected.fit_region((210, 230))
+peak = corrected.fit_region((210, 230))  # fit a peak to the region (210, 230)
 ```
 
 > Inspect results visually — correction can be unreliable near overlapping peaks.
