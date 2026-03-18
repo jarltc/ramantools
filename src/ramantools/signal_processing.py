@@ -15,7 +15,7 @@ class Peak(ABC):
     Two functions are available: either a Gaussian peak or Lorentzian peak can be fit to the data.
 
     Uses xr.DataArray to simplify slicing by accessing y values using x (and not having to fiddle with indices).
-    After fitting, Peaks have attributes amplitude, sigma, and center. 
+    After fitting, Peaks have attributes height, sigma/gamma, and center. 
     These can also be accessed with the property Peak.parameters.
 
     Args:
@@ -122,12 +122,12 @@ class LorentzPeak(Peak):
                  baseline=0):
         super().__init__(data, bounds, center, baseline)
 
-    def model(self, x, amplitude, center, gamma):
+    def model(self, x, height, center, gamma):
         """ Lorentzian line function.
         
         See more at: https://mathworld.wolfram.com/LorentzianFunction.html
         """
-        return amplitude * (gamma**2 / ((x-center)**2 + gamma**2))
+        return height * (gamma**2 / ((x-center)**2 + gamma**2))
     
     @property
     def params(self):
